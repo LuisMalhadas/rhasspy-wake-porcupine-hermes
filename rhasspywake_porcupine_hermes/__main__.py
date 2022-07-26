@@ -66,6 +66,11 @@ def main():
         help="Site id(s) to forward audio to MQTT after detection",
     )
     parser.add_argument("--lang", help="Set lang in hotword detected message")
+    parser.add_argument(
+        "--access_key",
+        action="append",
+        help="access_key",
+    )
 
     # --- DEPRECATED (using pvporcupine now) ---
     parser.add_argument("--library", help="Path to Porcupine shared library (.so)")
@@ -123,11 +128,38 @@ def main():
         if not resolved:
             _LOGGER.warning("Failed to resolve keyword: %s", keyword)
 
+    if not args.library:
+        # Use embedded library
+        lib_dir = os.path.join(_DIR, "porcupine", "lib")
+        if machine == "armv6l":
+            # Pi 0/1
+            lib_dir = os.path.join(lib_dir, "raspberry-pi", "arm11")
+        elif machine in ["armv7l", "armv8"]:
+            # Pi 2 uses Cortex A7
+            # Pi 3 uses Cortex A53
+            # Pi 4 uses Cortex A72
+            cpu_model = guess_cpu_model()
+            _LOGGER.debug("Guessing you have an ARM %s", cpu_model)
+            lib_dir = os.path.join(lib_dir, "raspberry-pi", str(cpu_model.value))
+        else:
+            # Assume x86_64
+            lib_dir = os.path.join(lib_dir, "linux", "x86_64")
+
+        args.library = os.path.join(lib_dir, "libpv_porcupine.so")
+
+    if not args.model:
+        # Use embedded model
+        args.model = os.path.join(
+            _DIR, "porcupine", "lib", "common", "porcupine_params.pv"
+        )
+
     _LOGGER.debug(
-        "Loading porcupine (kw=%s, kwdirs=%s, sensitivity=%s)",
+        "Loading porcupine (kw=%s, kwdirs=%s, sensitivity=%s, library=%s, model=%s)",
         args.keyword,
         [str(d) for d in args.keyword_dir],
         sensitivities,
+        args.library,
+        args.model,
     )
 
     keyword_names = [
@@ -140,7 +172,13 @@ def main():
     if args.stdin_audio:
         # Read WAV from stdin, detect, and exit
         client = None
-        hermes = WakeHermesMqtt(client, args.keyword, keyword_names, sensitivities)
+        hermes = WakeHermesMqtt(
+            client, 
+            args.keyword, 
+            keyword_names, 
+            sensitivities, 
+            library_path=args.library, 
+            model_path=args.model)
 
         if os.isatty(sys.stdin.fileno()):
             print("Reading WAV data from stdin...", file=sys.stderr)
@@ -173,6 +211,9 @@ def main():
         udp_forward_mqtt=args.udp_forward_mqtt,
         site_ids=args.site_id,
         lang=args.lang,
+        access_key=args.access_key,
+        library_path=args.library,
+        model_path=args.model,
     )
 
     _LOGGER.debug("Connecting to %s:%s", args.host, args.port)
